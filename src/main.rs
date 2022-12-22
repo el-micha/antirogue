@@ -35,15 +35,16 @@ struct Tcod {
 struct Tile {
     blocking: bool,
     blocking_sight: bool,
+    explored: bool,
 }
 
 impl Tile {
     pub fn empty() -> Self {
-        Tile {blocking: false, blocking_sight: false,}
+        Tile {blocking: false, blocking_sight: false, explored: false,}
     }
 
     pub fn wall() -> Self {
-        Tile {blocking: true, blocking_sight: true,}
+        Tile {blocking: true, blocking_sight: true, explored: false,}
     }
 
 }
@@ -223,7 +224,7 @@ fn main() {
     while !tcod.root.window_closed() {
 
         tcod.console.clear();
-        render_all(&mut tcod, &game, &entities);
+        render_all(&mut tcod, &mut game, &entities);
         tcod.root.flush();
         game.reset_fov();
 
@@ -233,14 +234,11 @@ fn main() {
             break;
         }
 
-
-
-
     }
 
 }
 
-fn render_all(tcod: &mut Tcod, game: &Game, entities: &[Entity]) {
+fn render_all(tcod: &mut Tcod, game: &mut Game, entities: &[Entity]) {
     if game.fov_recompute {
         let player = &entities[0];
         tcod.fov.compute_fov(player.x, player.y, TORCH_RADIUS, FOV_LIGHT_WALLS, FOV_ALGO);
@@ -265,7 +263,13 @@ fn render_all(tcod: &mut Tcod, game: &Game, entities: &[Entity]) {
                 (true, true) => COLOR_LIGHT_WALL,
                 (true, false) => COLOR_LIGHT_GROUND,
             };
-            tcod.console.set_char_background(x, y, color, BackgroundFlag::Set);
+            let explored = &mut game.map[x as usize][y as usize].explored;
+            if visible {
+                *explored = true;
+            }
+            if *explored {
+                tcod.console.set_char_background(x, y, color, BackgroundFlag::Set);
+            }
         }
     }
     blit(
