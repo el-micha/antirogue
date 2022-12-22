@@ -2,7 +2,7 @@
 
 Roughly following [this tutorial](https://tomassedovic.github.io/roguelike-tutorial/index.html).
 
-
+![](screenshots/fov.png)
 
 ### gameplay goals
 * encounter injured creatures and heal them

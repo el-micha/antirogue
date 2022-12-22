@@ -194,6 +194,7 @@ fn main() {
     tcod::system::set_fps(LIMIT_FPS);
     let root = Root::initializer()
         .font("terminal16x16_gs_ro.png", FontLayout::AsciiInRow)
+        //.font("consolas10x10_gs_tc.png", FontLayout::Tcod)
         .font_type(FontType::Greyscale)
         .size(SCREEN_WIDTH, SCREEN_HEIGHT)
         .title("a n t i - r o g u e")
