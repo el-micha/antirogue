@@ -3,6 +3,7 @@
 use tcod::colors::*;
 use tcod::console::*;
 use rand::Rng;
+use tcod::map::{FovAlgorithm, Map as FovMap};
 
 const SCREEN_WIDTH: i32 = 80;
 const SCREEN_HEIGHT: i32 = 50;
@@ -11,12 +12,24 @@ const LIMIT_FPS: i32 = 20;
 const MAP_WIDTH: i32 = 80;
 const MAP_HEIGHT: i32 = 45;
 
+const FOV_ALGO: FovAlgorithm = FovAlgorithm::Basic;
+const FOV_LIGHT_WALLS: bool = true;
+const TORCH_RADIUS: i32 = 10;
+
 const COLOR_DARK_WALL: Color = Color {r: 0, g: 0, b: 100};
+const COLOR_LIGHT_WALL: Color = Color {r: 130, g: 110, b: 50};
 const COLOR_DARK_GROUND: Color = Color {r: 50, g: 50, b: 150};
+const COLOR_LIGHT_GROUND: Color = Color {r: 200, g: 180, b: 50};
 
 const ROOM_MAX_SIZE: i32 = 10;
 const ROOM_MIN_SIZE: i32 = 6;
 const MAX_ROOMS: i32 = 30;
+
+struct Tcod {
+    root: Root,
+    console: Offscreen,
+    fov: FovMap,
+}
 
 #[derive(Clone, Copy, Debug)]
 struct Tile {
@@ -38,6 +51,17 @@ impl Tile {
 type Map = Vec<Vec<Tile>>;
 struct Game {
     map: Map,
+    fov_recompute: bool,
+}
+
+impl Game {
+    fn reset_fov(&mut self) {
+        self.fov_recompute = false;
+    }
+
+    fn set_recalculate_fov(&mut self) {
+        self.fov_recompute = true;
+    }
 }
 
 fn make_map(player: &mut Entity) -> Map {
@@ -138,11 +162,6 @@ fn create_v_tunnel(y1: i32, y2: i32, x: i32, map: &mut Map) {
     }
 }
 
-struct Tcod {
-    root: Root,
-    console: Offscreen,
-}
-
 #[derive(Debug)]
 struct Entity {
     x: i32,
@@ -156,10 +175,11 @@ impl Entity {
         Entity {x, y, char, color}
     }
 
-    pub fn move_by(&mut self, dx: i32, dy: i32, game: &Game) {
+    pub fn move_by(&mut self, dx: i32, dy: i32, game: &mut Game) {
         if !game.map[(self.x + dx) as usize][(self.y + dy) as usize].blocking {
             self.x += dx;
             self.y += dy;
+            game.set_recalculate_fov();
         }
     }
 
@@ -177,46 +197,75 @@ fn main() {
         .size(SCREEN_WIDTH, SCREEN_HEIGHT)
         .title("a n t i - r o g u e")
         .init();
-    let console = Offscreen::new(MAP_WIDTH, MAP_HEIGHT);
-    let mut tcod = Tcod{root, console};
+    let mut tcod = Tcod{
+        root,
+        console: Offscreen::new(MAP_WIDTH, MAP_HEIGHT),
+        fov: FovMap::new(MAP_WIDTH, MAP_HEIGHT),
+    };
 
 
     let player = Entity::new(0, 0, '@', WHITE);
     let npc = Entity::new(55, 20, 'H', YELLOW);
     let mut entities = vec![player, npc];
 
-    let game = Game {
+    let mut game = Game {
         map: make_map(&mut entities[0]),
+        fov_recompute: true,
     };
 
+    // populate FOV map
+    for y in 0..MAP_HEIGHT {
+        for x in 0..MAP_WIDTH {
+            tcod.fov.set(x, y, !game.map[x as usize][y as usize].blocking_sight, !game.map[x as usize][y as usize].blocking);
+        }
+    }
+    // ================================= MAIN LOOP =================================
     while !tcod.root.window_closed() {
+
         tcod.console.clear();
-
         render_all(&mut tcod, &game, &entities);
-
         tcod.root.flush();
+        game.reset_fov();
+
         let player = &mut entities[0];
-        let exit = handle_keys(&mut tcod, player, &game);
+        let exit = handle_keys(&mut tcod, player, &mut game);
         if exit {
             break;
         }
+
+
+
+
     }
 
 }
 
 fn render_all(tcod: &mut Tcod, game: &Game, entities: &[Entity]) {
-    for entity in entities {
-        entity.draw(&mut tcod.console);
+    if game.fov_recompute {
+        let player = &entities[0];
+        tcod.fov.compute_fov(player.x, player.y, TORCH_RADIUS, FOV_LIGHT_WALLS, FOV_ALGO);
     }
-    entities[0].draw(&mut tcod.console); // drawing player at the end
+
+    for entity in entities {
+        if tcod.fov.is_in_fov(entity.x, entity.y) {
+            entity.draw(&mut tcod.console);
+        }
+    }
+    entities[0].draw(&mut tcod.console); // drawing player again at the end
+
     for y in 0..MAP_HEIGHT {
         for x in 0..MAP_WIDTH {
+            let visible = tcod.fov.is_in_fov(x, y);
             let wall = game.map[x as usize][y as usize].blocking_sight;
-            if wall {
-                tcod.console.set_char_background(x, y, COLOR_DARK_WALL, BackgroundFlag::Set);
-            } else {
-                tcod.console.set_char_background(x, y, COLOR_DARK_GROUND, BackgroundFlag::Set);
-            }
+            let color = match (visible, wall) {
+                // outside fov
+                (false, true) => COLOR_DARK_WALL,
+                (false, false) => COLOR_DARK_GROUND,
+                // inside fov
+                (true, true) => COLOR_LIGHT_WALL,
+                (true, false) => COLOR_LIGHT_GROUND,
+            };
+            tcod.console.set_char_background(x, y, color, BackgroundFlag::Set);
         }
     }
     blit(
@@ -230,7 +279,7 @@ fn render_all(tcod: &mut Tcod, game: &Game, entities: &[Entity]) {
         );
 }
 
-fn handle_keys(tcod: &mut Tcod, player: &mut Entity, game: &Game) -> bool {
+fn handle_keys(tcod: &mut Tcod, player: &mut Entity, game: &mut Game) -> bool {
     use tcod::input::Key;
     use tcod::input::KeyCode::*;
     let key = tcod.root.wait_for_keypress(true);
