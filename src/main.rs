@@ -65,7 +65,7 @@ impl Game {
     }
 }
 
-fn make_map(player: &mut Entity) -> Map {
+fn make_map(entities: &mut Vec<Entity>) -> Map {
     let mut map = vec![vec![Tile::wall(); MAP_HEIGHT as usize]; MAP_WIDTH as usize];
 
     let mut rooms = vec![];
@@ -78,9 +78,11 @@ fn make_map(player: &mut Entity) -> Map {
         let failed = rooms.iter().any(|other_room| new_room.intersects_with(other_room));
         if !failed {
             create_room(new_room, &mut map);
+            place_entities(new_room, entities);
             let (new_x, new_y) = new_room.center();
             if rooms.is_empty() {
                 // this is the first room only
+                let player = &mut entities[0];
                 player.x = new_x;
                 player.y = new_y;
             } else {
@@ -131,6 +133,26 @@ impl Rect {
         && (self.x2 >= other.x1)
         && (self.y1 <= other.y2)
         && (self.y2 >= other.y1)
+    }
+}
+
+fn place_entities(room: Rect, entities: &mut Vec<Entity>) {
+    let num_creatures = rand::thread_rng().gen_range(1, 4);
+    for _ in 0..num_creatures {
+        let x = rand::thread_rng().gen_range(room.x1 + 1, room.x2);
+        let y = rand::thread_rng().gen_range(room.y1 + 1, room.y2);
+        let roll = rand::random::<f32>();
+        let mut creature = if roll < 0.2 {
+            println!("U");
+            Entity::new(x, y, 'U', DARKER_CYAN)
+        } else if roll < 0.6 {
+            println!("f");
+            Entity::new(x, y, 'f', MAGENTA)
+        } else {
+            println!("e");
+            Entity::new(x, y, 'e', DARK_RED)
+        };
+        entities.push(creature);
     }
 }
 
@@ -211,7 +233,7 @@ fn main() {
     let mut entities = vec![player, npc];
 
     let mut game = Game {
-        map: make_map(&mut entities[0]),
+        map: make_map(&mut entities),
         fov_recompute: true,
     };
 
