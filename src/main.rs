@@ -3,6 +3,7 @@
 use tcod::colors::*;
 use tcod::console::*;
 use rand::Rng;
+use tcod::input::is_cursor_visible;
 use tcod::map::{FovAlgorithm, Map as FovMap};
 
 const SCREEN_WIDTH: i32 = 80;
@@ -25,83 +26,12 @@ const ROOM_MAX_SIZE: i32 = 10;
 const ROOM_MIN_SIZE: i32 = 6;
 const MAX_ROOMS: i32 = 30;
 
+const PLAYER: usize = 0; // as index into entity vector
+
 struct Tcod {
     root: Root,
     console: Offscreen,
     fov: FovMap,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct Tile {
-    blocking: bool,
-    blocking_sight: bool,
-    explored: bool,
-}
-
-impl Tile {
-    pub fn empty() -> Self {
-        Tile {blocking: false, blocking_sight: false, explored: false,}
-    }
-
-    pub fn wall() -> Self {
-        Tile {blocking: true, blocking_sight: true, explored: false,}
-    }
-
-}
-
-type Map = Vec<Vec<Tile>>;
-struct Game {
-    map: Map,
-    fov_recompute: bool,
-}
-
-impl Game {
-    fn reset_fov(&mut self) {
-        self.fov_recompute = false;
-    }
-
-    fn set_recalculate_fov(&mut self) {
-        self.fov_recompute = true;
-    }
-}
-
-fn make_map(entities: &mut Vec<Entity>) -> Map {
-    let mut map = vec![vec![Tile::wall(); MAP_HEIGHT as usize]; MAP_WIDTH as usize];
-
-    let mut rooms = vec![];
-    for _ in 0..MAX_ROOMS {
-        let w = rand::thread_rng().gen_range(ROOM_MIN_SIZE, ROOM_MAX_SIZE + 1);
-        let h = rand::thread_rng().gen_range(ROOM_MIN_SIZE, ROOM_MAX_SIZE + 1);
-        let x = rand::thread_rng().gen_range(0, MAP_WIDTH - w);
-        let y = rand::thread_rng().gen_range(0, MAP_HEIGHT - h);
-        let new_room = Rect::new(x, y, w, h);
-        let failed = rooms.iter().any(|other_room| new_room.intersects_with(other_room));
-        if !failed {
-            create_room(new_room, &mut map);
-            place_entities(new_room, entities);
-            let (new_x, new_y) = new_room.center();
-            if rooms.is_empty() {
-                // this is the first room only
-                let player = &mut entities[0];
-                player.x = new_x;
-                player.y = new_y;
-            } else {
-                // these are all other rooms
-                let (prev_x, prev_y) = rooms[rooms.len() - 1].center();
-                if rand::random() {
-                    create_h_tunnel(prev_x, new_x, prev_y, &mut map);
-                    create_v_tunnel(prev_y, new_y, new_x, &mut map);
-                }
-                else {
-                    create_v_tunnel(prev_y, new_y, prev_x, &mut map);
-                    create_h_tunnel(prev_x, new_x, new_y, &mut map);
-                }
-            }
-            rooms.push(new_room);
-        }
-    }
-
-    map
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -136,21 +66,96 @@ impl Rect {
     }
 }
 
-fn place_entities(room: Rect, entities: &mut Vec<Entity>) {
+#[derive(Clone, Copy, Debug)]
+struct Tile {
+    blocking: bool,
+    blocking_sight: bool,
+    explored: bool,
+}
+
+impl Tile {
+    pub fn empty() -> Self {
+        Tile {blocking: false, blocking_sight: false, explored: false,}
+    }
+
+    pub fn wall() -> Self {
+        Tile {blocking: true, blocking_sight: true, explored: false,}
+    }
+
+}
+
+type Map = Vec<Vec<Tile>>;
+
+struct Game {
+    map: Map,
+    fov_recompute: bool,
+}
+
+impl Game {
+    fn reset_fov(&mut self) {
+        self.fov_recompute = false;
+    }
+
+    fn set_recalculate_fov(&mut self) {
+        self.fov_recompute = true;
+    }
+}
+
+fn make_map(entities: &mut Vec<Entity>) -> Map {
+    let mut map = vec![vec![Tile::wall(); MAP_HEIGHT as usize]; MAP_WIDTH as usize];
+
+    let mut rooms = vec![];
+    for _ in 0..MAX_ROOMS {
+        let w = rand::thread_rng().gen_range(ROOM_MIN_SIZE, ROOM_MAX_SIZE + 1);
+        let h = rand::thread_rng().gen_range(ROOM_MIN_SIZE, ROOM_MAX_SIZE + 1);
+        let x = rand::thread_rng().gen_range(0, MAP_WIDTH - w);
+        let y = rand::thread_rng().gen_range(0, MAP_HEIGHT - h);
+        let new_room = Rect::new(x, y, w, h);
+        let failed = rooms.iter().any(|other_room| new_room.intersects_with(other_room));
+        if !failed {
+            create_room(new_room, &mut map);
+            place_entities(new_room, &map, entities);
+            let (new_x, new_y) = new_room.center();
+            if rooms.is_empty() {
+                // this is the first room only
+                let player = &mut entities[0];
+                player.x = new_x;
+                player.y = new_y;
+            } else {
+                // these are all other rooms
+                let (prev_x, prev_y) = rooms[rooms.len() - 1].center();
+                if rand::random() {
+                    create_h_tunnel(prev_x, new_x, prev_y, &mut map);
+                    create_v_tunnel(prev_y, new_y, new_x, &mut map);
+                }
+                else {
+                    create_v_tunnel(prev_y, new_y, prev_x, &mut map);
+                    create_h_tunnel(prev_x, new_x, new_y, &mut map);
+                }
+            }
+            rooms.push(new_room);
+        }
+    }
+
+    map
+}
+
+
+fn place_entities(room: Rect, map: &Map, entities: &mut Vec<Entity>) {
     let num_creatures = rand::thread_rng().gen_range(1, 4);
     for _ in 0..num_creatures {
         let x = rand::thread_rng().gen_range(room.x1 + 1, room.x2);
         let y = rand::thread_rng().gen_range(room.y1 + 1, room.y2);
+        if is_blocked(x, y, map, entities) {
+            continue;
+        }
         let roll = rand::random::<f32>();
-        let mut creature = if roll < 0.2 {
-            println!("U");
-            Entity::new(x, y, 'U', DARKER_CYAN)
+        let creature = if roll < 0.2 {
+            Entity::new(x, y, 'U', "Unicorn", DARKER_CYAN, true, true)
         } else if roll < 0.6 {
-            println!("f");
-            Entity::new(x, y, 'f', MAGENTA)
+            Entity::new(x, y, 'f', "Fairy", MAGENTA, true, true)
         } else {
-            println!("e");
-            Entity::new(x, y, 'e', DARK_RED)
+            Entity::new(x, y, 'e', "Elf", DARK_RED, true, true)
         };
         entities.push(creature);
     }
@@ -162,13 +167,6 @@ fn create_room(room: Rect, map: &mut Map) {
             map[x as usize][y as usize] = Tile::empty();
         }
     }
-}
-
-fn in_order(x: i32, y: i32) -> (i32, i32) {
-    if x > y {
-        return (y, x);
-    }
-    (x, y)
 }
 
 fn create_h_tunnel(x1: i32, x2: i32, y: i32, map: &mut Map) {
@@ -185,30 +183,64 @@ fn create_v_tunnel(y1: i32, y2: i32, x: i32, map: &mut Map) {
     }
 }
 
+fn in_order(x: i32, y: i32) -> (i32, i32) {
+    if x > y {
+        return (y, x);
+    }
+    (x, y)
+}
+
+fn is_blocked(x: i32, y: i32, map: &Map, entities: &[Entity]) -> bool {
+    if map[x as usize][y as usize].blocking {
+        return true;
+    }
+    entities.iter().any(|entity| entity.blocking && entity.pos() == (x, y))
+}
+
 #[derive(Debug)]
 struct Entity {
     x: i32,
     y: i32,
     char: char,
     color: Color,
+    name: String,
+    blocking: bool,
+    alive: bool,
 }
 
 impl Entity {
-    pub fn new(x: i32, y: i32, char: char, color: Color) -> Self {
-        Entity {x, y, char, color}
-    }
-
-    pub fn move_by(&mut self, dx: i32, dy: i32, game: &mut Game) {
-        if !game.map[(self.x + dx) as usize][(self.y + dy) as usize].blocking {
-            self.x += dx;
-            self.y += dy;
-            game.set_recalculate_fov();
+    pub fn new(x: i32, y: i32, char: char, name: &str, color: Color, blocking: bool, alive: bool) -> Self {
+        Entity {
+            x: x,
+            y: y,
+            char: char,
+            name: name.into(),
+            color: color,
+            blocking: blocking,
+            alive: alive,
         }
     }
 
     pub fn draw(&self, console: &mut dyn Console) {
         console.set_default_foreground(self.color);
         console.put_char(self.x, self.y, self.char, BackgroundFlag::None);
+    }
+
+    pub fn pos(&self) -> (i32, i32) {
+        (self.x, self.y)
+    }
+
+    pub fn set_pos(&mut self, x: i32, y: i32) {
+        self.x = x;
+        self.y = y;
+    }
+}
+// belongs to Entity, but not a member due to ownership issue
+fn move_by(subject_index: usize, dx: i32, dy: i32, game: &mut Game, entities: &mut [Entity]) {
+    let (x, y) = entities[subject_index].pos();
+    if !is_blocked(x + dx, y + dy, &game.map, entities) {
+        entities[subject_index].set_pos(x + dx, y + dy);
+        game.set_recalculate_fov();
     }
 }
 
@@ -228,9 +260,8 @@ fn main() {
     };
 
 
-    let player = Entity::new(0, 0, '@', WHITE);
-    let npc = Entity::new(55, 20, 'H', YELLOW);
-    let mut entities = vec![player, npc];
+    let player = Entity::new(0, 0, '@', "Player", WHITE, true, true);
+    let mut entities = vec![player];
 
     let mut game = Game {
         map: make_map(&mut entities),
@@ -251,8 +282,7 @@ fn main() {
         tcod.root.flush();
         game.reset_fov();
 
-        let player = &mut entities[0];
-        let exit = handle_keys(&mut tcod, player, &mut game);
+        let exit = handle_keys(&mut tcod, &mut entities, &mut game);
         if exit {
             break;
         }
@@ -263,7 +293,7 @@ fn main() {
 
 fn render_all(tcod: &mut Tcod, game: &mut Game, entities: &[Entity]) {
     if game.fov_recompute {
-        let player = &entities[0];
+        let player = &entities[PLAYER];
         tcod.fov.compute_fov(player.x, player.y, TORCH_RADIUS, FOV_LIGHT_WALLS, FOV_ALGO);
     }
 
@@ -272,7 +302,7 @@ fn render_all(tcod: &mut Tcod, game: &mut Game, entities: &[Entity]) {
             entity.draw(&mut tcod.console);
         }
     }
-    entities[0].draw(&mut tcod.console); // drawing player again at the end
+    entities[0].draw(&mut tcod.console); // draw player again at the end
 
     for y in 0..MAP_HEIGHT {
         for x in 0..MAP_WIDTH {
@@ -306,15 +336,15 @@ fn render_all(tcod: &mut Tcod, game: &mut Game, entities: &[Entity]) {
         );
 }
 
-fn handle_keys(tcod: &mut Tcod, player: &mut Entity, game: &mut Game) -> bool {
+fn handle_keys(tcod: &mut Tcod, entities: &mut [Entity], game: &mut Game) -> bool {
     use tcod::input::Key;
     use tcod::input::KeyCode::*;
     let key = tcod.root.wait_for_keypress(true);
     match key {
-        Key {code: Char, printable: 'w', ..} => player.move_by(0, -1, game),
-        Key {code: Char, printable: 's', ..} => player.move_by(0, 1, game),
-        Key {code: Char, printable: 'a', ..} => player.move_by(-1, 0, game),
-        Key {code: Char, printable: 'd', ..} => player.move_by(1, 0, game),
+        Key {code: Char, printable: 'w', ..} => move_by(PLAYER,0, -1, game, entities),
+        Key {code: Char, printable: 's', ..} => move_by(PLAYER,0, 1, game, entities),
+        Key {code: Char, printable: 'a', ..} => move_by(PLAYER,-1, 0, game, entities),
+        Key {code: Char, printable: 'd', ..} => move_by(PLAYER,1, 0, game, entities),
         Key {code: Escape, ..} => return true, // exit game
         _ => {}
     }
