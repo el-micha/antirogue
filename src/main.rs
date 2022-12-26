@@ -244,6 +244,15 @@ fn move_by(subject_index: usize, dx: i32, dy: i32, game: &mut Game, entities: &m
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum PlayerAction {
+    TookTurn,
+    NotTookTurn,
+    Exit,
+}
+
+
+
 fn main() {
     tcod::system::set_fps(LIMIT_FPS);
     let root = Root::initializer()
@@ -282,8 +291,8 @@ fn main() {
         tcod.root.flush();
         game.reset_fov();
 
-        let exit = handle_keys(&mut tcod, &mut entities, &mut game);
-        if exit {
+        let action = handle_keys(&mut tcod, &mut entities, &mut game);
+        if action == PlayerAction::Exit {
             break;
         }
 
@@ -336,19 +345,33 @@ fn render_all(tcod: &mut Tcod, game: &mut Game, entities: &[Entity]) {
         );
 }
 
-fn handle_keys(tcod: &mut Tcod, entities: &mut [Entity], game: &mut Game) -> bool {
+fn handle_keys(tcod: &mut Tcod, entities: &mut [Entity], game: &mut Game) -> PlayerAction {
     use tcod::input::Key;
     use tcod::input::KeyCode::*;
+    use PlayerAction::*;
     let key = tcod.root.wait_for_keypress(true);
-    match key {
-        Key {code: Char, printable: 'w', ..} => move_by(PLAYER,0, -1, game, entities),
-        Key {code: Char, printable: 's', ..} => move_by(PLAYER,0, 1, game, entities),
-        Key {code: Char, printable: 'a', ..} => move_by(PLAYER,-1, 0, game, entities),
-        Key {code: Char, printable: 'd', ..} => move_by(PLAYER,1, 0, game, entities),
-        Key {code: Escape, ..} => return true, // exit game
-        _ => {}
+    let alive = entities[PLAYER].alive;
+    match (alive, key) {
+        (true, Key {code: Char, printable: 'w', ..}) => {
+            move_by(PLAYER,0, -1, game, entities);
+            TookTurn
+        },
+        (true, Key {code: Char, printable: 's', ..}) => {
+            move_by(PLAYER, 0, 1, game, entities);
+            TookTurn
+        },
+        (true, Key {code: Char, printable: 'a', ..}) => {
+            move_by(PLAYER,-1, 0, game, entities);
+            TookTurn
+        },
+        (true, Key {code: Char, printable: 'd', ..}) => {
+            move_by(PLAYER,1, 0, game, entities);
+            TookTurn
+        },
+        (true, Key {code: Escape, ..}) => Exit,
+        _ => NotTookTurn,
     }
-    false
+
 }
 
 
